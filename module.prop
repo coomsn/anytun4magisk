@@ -1,6 +1,7 @@
 id=anytun-module
 name=anytun4magisk
 version=v1.0
-versionCode=20240923
+versionCode=2024092311
 author=Tony
 description=Sharing local VPN traffic on the network. Open VPN first, then open this module; Close this module first, then close the VPN.
+updateJson=https://github.com/coomsn/anytun4magisk/raw/main/update.json
