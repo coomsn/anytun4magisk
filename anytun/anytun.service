@@ -54,7 +54,8 @@ local action=$1
   done < /data/misc/net/rt_tables
   log Info "tun_device: ${tun_device}" >> "${scripts_dir}/run.log"
   log Info "tun_table_index: ${tun_table_index}" >> "${scripts_dir}/run.log"
-  # echo "${tun_table_index}" > ${scripts_dir}/table_index
+  
+  echo "${tun_table_index} ${tun_device}" > ${scripts_dir}/rt_tables
 
 ipv4_rules=(
   "iif lo goto 6000 pref 5000"
