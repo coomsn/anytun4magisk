@@ -1,0 +1,181 @@
+#!/system/bin/sh
+
+export PATH="/data/adb/magisk:/data/adb/ksu/bin:/data/adb/ap/bin:$PATH:/data/data/com.termux/files/usr/bin"
+
+scripts=$(realpath $0)
+scripts_dir=$(dirname ${scripts})
+
+tun_device="tun0"
+
+log() {
+  export TZ=Asia/Shanghai
+  now=$(date +"[%Y-%m-%d %H:%M:%S]")
+  case $1 in
+    Info)
+      [ -t 1 ] && echo -e "\033[1;32m${now} [Info]: $2\033[0m" || echo "${now} [Info]: $2"
+      ;;
+    Warn)
+      [ -t 1 ] && echo -e "\033[1;33m${now} [Warn]: $2\033[0m" || echo "${now} [Warn]: $2"
+      ;;
+    Error)
+      [ -t 1 ] && echo -e "\033[1;31m${now} [Error]: $2\033[0m" || echo "${now} [Error]: $2"
+      ;;
+    Status)
+      [ -t 1 ] && echo -e "\033[1;38;5;208m${now} [Status]: $2\033[0m" || echo "${now} [Status]: $2"
+      ;;
+    *)
+      [ -t 1 ] && echo -e "\033[1;30m${now} [$1]: $2\033[0m" || echo "${now} [$1]: $2"
+      ;;
+  esac
+}
+
+tun_forward_ip_rules() {
+local action=$1
+  while [ ! -f "/data/misc/net/rt_tables" ] ; do
+    sleep 3
+  done
+  while read -r index name ; do
+    if [ "${name}" = "${tun_device}" ] ; then
+      tun_table_index=${index}
+    fi
+  done < /data/misc/net/rt_tables
+  log Info "tun_device: ${tun_device}" >> "${scripts_dir}/run.log"
+  log Info "tun_table_index: ${tun_table_index}" >> "${scripts_dir}/run.log"
+  # echo "${tun_table_index}" > ${scripts_dir}/table_index
+
+ipv4_rules=(
+  "iif lo goto 6000 pref 5000"
+  "iif ${tun_device} lookup main suppress_prefixlength 0 pref 5010"
+  "iif ${tun_device} goto 6000 pref 5020"
+  "from 10.0.0.0/8 lookup ${tun_table_index} pref 5030"
+  "from 172.16.0.0/12 lookup ${tun_table_index} pref 5040"
+  "from 192.168.0.0/16 lookup ${tun_table_index} pref 5050"
+  "nop pref 6000"
+  "lookup main pref 7000"
+)
+  for rule in "${ipv4_rules[@]}"; do
+    ip -4 rule "${action}" ${rule} > /dev/null 2>&1
+  done
+  log Info "ip -4 '"${action}"' rules completed" >> "${scripts_dir}/run.log"
+ipv6_rules=(
+  "iif lo goto 6000 pref 5000"
+  "iif ${tun_device} lookup main suppress_prefixlength 0 pref 5010"
+  "iif ${tun_device} goto 6000 pref 5020"
+  # "from 2001:db8::/32 lookup ${tun_table_index} pref 5030"
+  # "from fc00::/7 lookup ${tun_table_index} pref 5040"
+  # "from fd00::/8 lookup ${tun_table_index} pref 5050"
+  "nop pref 6000"
+  "lookup main pref 7000"
+)
+  for rule in "${ipv6_rules[@]}"; do
+    ip -6 rule "${action}" ${rule} > /dev/null 2>&1
+  done
+  log Info "ip -6 '"${action}"' rules completed" >> "${scripts_dir}/run.log"
+}
+
+tun_forward_ip_rules_del() {
+  for preff in 5000 5010 5020 5030 5040 5050 6000; do
+    ip -4 rule del pref $preff > /dev/null 2>&1
+    ip -6 rule del pref $preff > /dev/null 2>&1
+  done
+  log Info "Remove ip rules by del pref" >> "${scripts_dir}/run.log"
+}
+
+forward() {
+local action=$1
+
+  echo 1 > /proc/sys/net/ipv4/ip_forward
+  echo 2 > /proc/sys/net/ipv4/conf/default/rp_filter
+  echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter
+    
+  if [ "${action}" = "-I" ]; then
+    tun_forward_ip_rules "add" # > /dev/null 2>&1
+    log Info "Add ip rules by '"add"' command" >> "${scripts_dir}/run.log"
+  else
+    tun_forward_ip_rules "del" # > /dev/null 2>&1
+    log Info "Remove ip rules by '"del"' command" >> "${scripts_dir}/run.log"
+  fi
+  iptables_rules "${action}"
+}
+
+iptables_rules() {
+local action=$1
+if [[ "${action}" == "-I" ]]; then
+
+  # 创建自定义链（如果它们不存在）
+  iptables -t nat -N TUN_PREROUTING 2>/dev/null
+  iptables -t nat -F TUN_PREROUTING 2>/dev/null
+  iptables -t nat -N TUN_POSTROUTING 2>/dev/null
+  iptables -t nat -F TUN_POSTROUTING 2>/dev/null
+  iptables -N TUN_FORWARD 2>/dev/null
+  iptables -F TUN_FORWARD 2>/dev/null
+  ip6tables -N TUN_FORWARD 2>/dev/null
+  ip6tables -F TUN_FORWARD 2>/dev/null
+
+  # 添加 iptables 规则
+  iptables -t nat "${action}" TUN_PREROUTING -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53
+  iptables -t nat "${action}" TUN_POSTROUTING -o tun0 -j MASQUERADE
+  iptables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
+  iptables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
+
+  # 添加 ip6tables 规则
+  ip6tables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
+  ip6tables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
+  
+  # 引用自定义链到系统链
+  iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
+  iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
+  iptables "${action}" FORWARD -j TUN_FORWARD
+  ip6tables "${action}" FORWARD -j TUN_FORWARD
+
+else
+  # 在删除操作中，取消系统链对自定义链的引用
+  iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
+  iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
+  iptables "${action}" FORWARD -j TUN_FORWARD
+  ip6tables "${action}" FORWARD -j TUN_FORWARD
+
+  # 删除自定义链（如果它们没有被引用）
+  iptables -t nat -F TUN_PREROUTING 2>/dev/null
+  iptables -t nat -F TUN_POSTROUTING 2>/dev/null
+  iptables -F TUN_FORWARD 2>/dev/null
+  ip6tables -F TUN_FORWARD 2>/dev/null
+
+  iptables -t nat -X TUN_PREROUTING 2>/dev/null
+  iptables -t nat -X TUN_POSTROUTING 2>/dev/null
+  iptables -X TUN_FORWARD 2>/dev/null
+  ip6tables -X TUN_FORWARD 2>/dev/null
+fi
+  log Info "iptables '"${action}"' command completed" >> "${scripts_dir}/run.log"
+}
+
+clear
+start_tun() {
+if ip link | grep -Eq 'tun[0-9]'; then
+  log info "---welcome---" > "${scripts_dir}/run.log"
+  tun_forward_ip_rules_del
+  forward "-I"
+  touch "${scripts_dir}/start"
+  rm -f "${scripts_dir}/stop" 2>/dev/null
+  log Info "Tun proxy started" >> "${scripts_dir}/run.log"
+  echo "Tun proxy started"
+else
+  log Warn "Open the VPN and restart the module" > "${scripts_dir}/run.log"
+fi
+}
+
+stop_tun() {
+if ip link | grep -Eq 'tun[0-9]'; then
+  log info "---goodbye---" > "${scripts_dir}/run.log"
+  forward "-D"
+  tun_forward_ip_rules_del
+  touch "${scripts_dir}/stop"
+  rm -rf "${scripts_dir}/start" 2>/dev/null
+  log Info "Tun proxy stopped" >> "${scripts_dir}/run.log"
+else
+  log Warn "Magisk module has been turned off" > "${scripts_dir}/run.log"
+fi
+}
+
+# 2024 9 23 0800
+
