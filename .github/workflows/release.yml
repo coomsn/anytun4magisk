@@ -1,4 +1,4 @@
-name: Release, including kernel, v1.0.xx
+name: Release anytun
 
 on:
   workflow_dispatch:
