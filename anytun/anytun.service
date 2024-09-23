@@ -5,6 +5,8 @@ export PATH="/data/adb/magisk:/data/adb/ksu/bin:/data/adb/ap/bin:$PATH:/data/dat
 scripts=$(realpath $0)
 scripts_dir=$(dirname ${scripts})
 
+tun_device="tun0"
+
 log() {
   export TZ=Asia/Shanghai
   now=$(date +"[%Y-%m-%d %H:%M:%S]")
@@ -29,19 +31,6 @@ log() {
 
 tun_forward_ip_rules() {
 local action=$1
-local max_retries=5
-local retry_count=0
-tun_device=""
-if [ ${action} == "-I" ]; then
-  while [ -z "${tun_device}" ] && [ $retry_count -lt $max_retries ]; do
-    tun_device=$(ip rule | grep -E "from all iif tun[0-9] lookup" | awk '{for(i=1;i<=NF;i++) if($i ~ /tun[0-9]/) {print $i; exit}}')
-    if [ -n "${tun_device}" ]; then
-        break
-    fi
-    sleep 1
-    retry_count=$((retry_count + 1))
-  done
-
   while [ ! -f "/data/misc/net/rt_tables" ] ; do
     sleep 3
   done
@@ -52,16 +41,8 @@ if [ ${action} == "-I" ]; then
   done < /data/misc/net/rt_tables
   log Info "tun_device: ${tun_device}" >> "${scripts_dir}/run.log"
   log Info "tun_table_index: ${tun_table_index}" >> "${scripts_dir}/run.log"
-  
-  echo "${tun_table_index} ${tun_device}" > ${scripts_dir}/rt_tables
-  tun_table_index=""
-  tun_device=""
-fi
-  
-if [ ${action} == "-I" ] && [ -f "${scripts_dir}/rt_tables" ]; then
-  read tun_table_index tun_device < "${scripts_dir}/rt_tables"
-fi
-  
+  # echo "${tun_table_index}" > ${scripts_dir}/table_index
+
 ipv4_rules=(
   "iif lo goto 6000 pref 5000"
   "iif ${tun_device} lookup main suppress_prefixlength 0 pref 5010"
@@ -76,7 +57,6 @@ ipv4_rules=(
     ip -4 rule "${action}" ${rule} > /dev/null 2>&1
   done
   log Info "ip -4 '"${action}"' rules completed" >> "${scripts_dir}/run.log"
-
 ipv6_rules=(
   "iif lo goto 6000 pref 5000"
   "iif ${tun_device} lookup main suppress_prefixlength 0 pref 5010"
@@ -197,5 +177,5 @@ else
 fi
 }
 
-# 2024 9 23 1335
+# 2024 9 23 0800
 
