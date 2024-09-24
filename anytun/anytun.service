@@ -75,11 +75,6 @@ fi
   log Info "tun_table_index: ${tun_table_index}" >> "${scripts_dir}/run.log"
 }
 
-ip_route() {
-  local action=$1
-  # standby
-}
-
 tun_forward_ip_rules() {
 local action=$1
 
@@ -124,52 +119,40 @@ tun_forward_ip_rules_del() {
 } > /dev/null 2>&1
 
 iptables_rules() {
-local action=$1
-if [[ "${action}" == "-I" ]]; then
-
-  iptables -t nat -N TUN_PREROUTING 2>/dev/null
-  iptables -t nat -F TUN_PREROUTING 2>/dev/null
-  iptables -t nat -N TUN_POSTROUTING 2>/dev/null
-  iptables -t nat -F TUN_POSTROUTING 2>/dev/null
-  iptables -N TUN_FORWARD 2>/dev/null
-  iptables -F TUN_FORWARD 2>/dev/null
-  ip6tables -N TUN_FORWARD 2>/dev/null
-  ip6tables -F TUN_FORWARD 2>/dev/null
-
-  iptables -t nat "${action}" TUN_PREROUTING -p udp --dport 53 -j DNAT --to-destination 127.0.0.1:53
-  
-  # iptables -t nat "${action}" TUN_POSTROUTING -o wlan0 -j MASQUERADE
-  iptables -t nat "${action}" TUN_POSTROUTING -o "${tun_device}" -j MASQUERADE
-  # iptables -t nat "${action}" TUN_POSTROUTING -o "${tun_device}" -p udp --dport 53 -j MASQUERADE
-  
-  iptables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
-  iptables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
-  
-  ip6tables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
-  ip6tables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
-  
-  iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
-  iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
-  iptables "${action}" FORWARD -j TUN_FORWARD
-  ip6tables "${action}" FORWARD -j TUN_FORWARD
-
-elif [[ "${action}" == "-D" ]]; then
-  iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
-  iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
-  iptables "${action}" FORWARD -j TUN_FORWARD
-  ip6tables "${action}" FORWARD -j TUN_FORWARD
-
-  iptables -t nat -F TUN_PREROUTING 2>/dev/null
-  iptables -t nat -F TUN_POSTROUTING 2>/dev/null
-  iptables -F TUN_FORWARD 2>/dev/null
-  ip6tables -F TUN_FORWARD 2>/dev/null
-
-  iptables -t nat -X TUN_PREROUTING 2>/dev/null
-  iptables -t nat -X TUN_POSTROUTING 2>/dev/null
-  iptables -X TUN_FORWARD 2>/dev/null
-  ip6tables -X TUN_FORWARD 2>/dev/null
-  
-fi
+local iptables=$1
+local action=$2
+  if [[ "${action}" == "-I" ]]; then
+      ${iptables} -N TUN_FORWARD 2>/dev/null
+      ${iptables} -F TUN_FORWARD 2>/dev/null
+      ${iptables} "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
+      ${iptables} "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
+      ${iptables} "${action}" FORWARD -j TUN_FORWARD
+  elif [[ "${action}" == "-D" ]]; then
+      ${iptables} "${action}" FORWARD -j TUN_FORWARD
+      ${iptables} -F TUN_FORWARD 2>/dev/null
+      ${iptables} -X TUN_FORWARD 2>/dev/null
+  fi
+  log Info "${iptables} ${action} command completed" >> "${scripts_dir}/run.log"
+# only for vpn
+  if [[ "${iptables}" == "iptables" ]]; then
+    if [[ "${action}" == "-I" ]]; then
+      iptables -t nat -N TUN_PREROUTING 2>/dev/null
+      iptables -t nat -F TUN_PREROUTING 2>/dev/null
+      iptables -t nat -N TUN_POSTROUTING 2>/dev/null
+      iptables -t nat -F TUN_POSTROUTING 2>/dev/null
+      iptables -t nat "${action}" TUN_PREROUTING -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53
+      iptables -t nat "${action}" TUN_POSTROUTING -o tun0 -j MASQUERADE
+      iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
+      iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
+    elif [[ "${action}" == "-D" ]]; then
+      iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
+      iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
+      iptables -t nat -F TUN_PREROUTING 2>/dev/null
+      iptables -t nat -F TUN_POSTROUTING 2>/dev/null
+      iptables -t nat -X TUN_PREROUTING 2>/dev/null
+      iptables -t nat -X TUN_POSTROUTING 2>/dev/null
+    fi
+  fi
 }
 
 forward() {
@@ -183,15 +166,14 @@ fi
 if [ "${action}" = "-I" ]; then
     tun_forward_ip_rules_del
     tun_forward_ip_rules "add"
-    ip_route "add"
     enable_ipv6
   elif [ "${action}" = "-D" ]; then
     tun_forward_ip_rules "del" 
     tun_forward_ip_rules_del
-    ip_route "del" 
     # disable_ipv6
 fi
-  iptables_rules "${action}"
+  iptables_rules "iptables" "${action}"
+  iptables_rules "ip6tables" "${action}"
 }
 
 clear
