@@ -27,6 +27,27 @@ log() {
   esac
 }
 
+disable_ipv6() {
+  echo 0 > /proc/sys/net/ipv6/conf/all/accept_ra
+  echo 0 > /proc/sys/net/ipv6/conf/wlan0/accept_ra
+  echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
+  echo 1 > /proc/sys/net/ipv6/conf/default/disable_ipv6
+  echo 1 > /proc/sys/net/ipv6/conf/wlan0/disable_ipv6
+  log Info "ipv6: disable" >> "${scripts_dir}/run.log"
+} 
+
+enable_ipv6() {
+  echo 1 > /proc/sys/net/ipv4/ip_forward
+  echo 2 > /proc/sys/net/ipv4/conf/default/rp_filter
+  echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter
+  echo 1 > /proc/sys/net/ipv6/conf/all/accept_ra
+  echo 1 > /proc/sys/net/ipv6/conf/wlan0/accept_ra
+  echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6
+  echo 0 > /proc/sys/net/ipv6/conf/default/disable_ipv6
+  echo 0 > /proc/sys/net/ipv6/conf/wlan0/disable_ipv6
+  log Info "ipv6: enable" >> "${scripts_dir}/run.log"
+} 
+
 find_index_device(){
 local action=$1
 if [ "${action}" = "-I" ]; then
@@ -65,13 +86,13 @@ ipv4_rules=(
   "from 172.16.0.0/12 lookup ${tun_table_index} pref 5040"
   "from 192.168.0.0/16 lookup ${tun_table_index} pref 5050"
   "nop pref 6000"
+  "from all iif ${tun_device} lookup main suppress_prefixlength 0 pref 8000"
   "lookup main pref 7000"
 )
 
   for rule in "${ipv4_rules[@]}"; do
     ip -4 rule "${action}" ${rule} > /dev/null 2>&1
   done
-  log Info "ip -4 '"${action}"' rules completed" >> "${scripts_dir}/run.log"
   
 ipv6_rules=(
   "iif lo goto 6000 pref 5000"
@@ -79,47 +100,28 @@ ipv6_rules=(
   "iif ${tun_device} goto 6000 pref 5020"
   # "from 2001:db8::/32 lookup ${tun_table_index} pref 5030"
   # "from fc00::/7 lookup ${tun_table_index} pref 5040"
-  # "from fd00::/8 lookup ${tun_table_index} pref 5050"
+  "from fd00::/8 lookup ${tun_table_index} pref 5050"
   "nop pref 6000"
+  "from all iif ${tun_device} lookup main suppress_prefixlength 0 pref 8000"
   "lookup main pref 7000"
 )
 
   for rule in "${ipv6_rules[@]}"; do
     ip -6 rule "${action}" ${rule} > /dev/null 2>&1
   done
-  log Info "ip -6 '"${action}"' rules completed" >> "${scripts_dir}/run.log"
 }
 
 tun_forward_ip_rules_del() {
-  for preff in 5000 5010 5020 5030 5040 5050 6000; do
+  for preff in 5000 5010 5020 5030 5040 5050 6000 7000 8000; do
     ip -4 rule del pref $preff > /dev/null 2>&1
     ip -6 rule del pref $preff > /dev/null 2>&1
   done
-  log Info "Remove ip rules by del pref" >> "${scripts_dir}/run.log"
-}
-
-forward() {
-local action=$1
-
-  echo 1 > /proc/sys/net/ipv4/ip_forward
-  echo 2 > /proc/sys/net/ipv4/conf/default/rp_filter
-  echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter
-    
-  if [ "${action}" = "-I" ]; then
-    tun_forward_ip_rules "add" # > /dev/null 2>&1
-    log Info "Add ip rules by '"add"' command" >> "${scripts_dir}/run.log"
-  else
-    tun_forward_ip_rules "del" # > /dev/null 2>&1
-    log Info "Remove ip rules by '"del"' command" >> "${scripts_dir}/run.log"
-  fi
-  iptables_rules "${action}"
-}
+} > /dev/null 2>&1
 
 iptables_rules() {
 local action=$1
 if [[ "${action}" == "-I" ]]; then
 
-  # 创建自定义链（如果它们不存在）
   iptables -t nat -N TUN_PREROUTING 2>/dev/null
   iptables -t nat -F TUN_PREROUTING 2>/dev/null
   iptables -t nat -N TUN_POSTROUTING 2>/dev/null
@@ -129,30 +131,25 @@ if [[ "${action}" == "-I" ]]; then
   ip6tables -N TUN_FORWARD 2>/dev/null
   ip6tables -F TUN_FORWARD 2>/dev/null
 
-  # 添加 iptables 规则
   iptables -t nat "${action}" TUN_PREROUTING -p udp --dport 53 -j DNAT --to-destination 1.1.1.1:53
   iptables -t nat "${action}" TUN_POSTROUTING -o tun0 -j MASQUERADE
   iptables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
   iptables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
 
-  # 添加 ip6tables 规则
   ip6tables "${action}" TUN_FORWARD -i "${tun_device}" -j ACCEPT
   ip6tables "${action}" TUN_FORWARD -o "${tun_device}" -j ACCEPT
   
-  # 引用自定义链到系统链
   iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
   iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
   iptables "${action}" FORWARD -j TUN_FORWARD
   ip6tables "${action}" FORWARD -j TUN_FORWARD
 
-else
-  # 在删除操作中，取消系统链对自定义链的引用
+elif [[ "${action}" == "-D" ]]; then
   iptables -t nat "${action}" PREROUTING -j TUN_PREROUTING
   iptables -t nat "${action}" POSTROUTING -j TUN_POSTROUTING
   iptables "${action}" FORWARD -j TUN_FORWARD
   ip6tables "${action}" FORWARD -j TUN_FORWARD
 
-  # 删除自定义链（如果它们没有被引用）
   iptables -t nat -F TUN_PREROUTING 2>/dev/null
   iptables -t nat -F TUN_POSTROUTING 2>/dev/null
   iptables -F TUN_FORWARD 2>/dev/null
@@ -162,8 +159,28 @@ else
   iptables -t nat -X TUN_POSTROUTING 2>/dev/null
   iptables -X TUN_FORWARD 2>/dev/null
   ip6tables -X TUN_FORWARD 2>/dev/null
+  
 fi
-  log Info "iptables '"${action}"' command completed" >> "${scripts_dir}/run.log"
+}
+
+forward() {
+local action=$1
+if [ "${action}" = "-I" ]; then
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+    echo 2 > /proc/sys/net/ipv4/conf/default/rp_filter
+    echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter
+fi
+
+if [ "${action}" = "-I" ]; then
+    tun_forward_ip_rules_del
+    tun_forward_ip_rules "add"
+    enable_ipv6
+  elif [ "${action}" = "-D" ]; then
+    tun_forward_ip_rules "del" 
+    tun_forward_ip_rules_del
+    disable_ipv6
+fi
+  iptables_rules "${action}"
 }
 
 clear
@@ -171,7 +188,6 @@ start_tun() {
   log info "---welcome---" > "${scripts_dir}/run.log"
   find_index_device "-I"
 if [ -n "${tun_device}" ]; then
-  tun_forward_ip_rules_del
   forward "-I"
   log Info "Tun proxy started" >> "${scripts_dir}/run.log"
   echo "Tun proxy started"
@@ -185,7 +201,6 @@ stop_tun() {
   find_index_device "-D"
 if [ -n "${tun_device}" ]; then
   forward "-D"
-  tun_forward_ip_rules_del
   rm -f "${scripts_dir}/rt_tables" 2>/dev/null
   log Info "Tun proxy stopped" >> "${scripts_dir}/run.log"
 else
@@ -193,4 +208,4 @@ else
 fi
 }
 
-# 2024 9 23 1625
+# 2024 9 24 0930
