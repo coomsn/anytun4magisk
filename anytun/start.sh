@@ -11,12 +11,15 @@ export PATH="/data/adb/magisk:/data/adb/ksu/bin:$PATH:/system/bin"
 source ${scripts_dir}/anytun.service
 
 if [ ! -f "${module_dir}/disable" ]; then
+  forward "-D" 2> /dev/null
   start_tun
+  grep -qE "tun[0-9]$" "${rt_tables}" || log Warn "vpn not enabled"
 else
-  echo "module not turned on"
+  stop_tun 2> /dev/null
+  log Warn "module not enabled"
 fi
 
-start_anytun.inotify() {
+create_anytun_inotify() {
   PIDs=($(busybox pidof inotifyd))
   for PID in "${PIDs[@]}"; do
     if grep -q "anytun.inotify" "/proc/$PID/cmdline"; then
@@ -26,4 +29,4 @@ start_anytun.inotify() {
   inotifyd "${scripts_dir}/anytun.inotify" "${module_dir}" >/dev/null 2>&1 &
 }
 
-start_anytun.inotify
+create_anytun_inotify
