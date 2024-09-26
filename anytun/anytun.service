@@ -32,9 +32,6 @@ disable_ipv6() {
   log Info "ipv6: disable" >> "${scripts_dir}/run.log"
 } 
 enable_ipv6() {
-  echo 1 > /proc/sys/net/ipv4/ip_forward
-  echo 2 > /proc/sys/net/ipv4/conf/default/rp_filter
-  echo 2 > /proc/sys/net/ipv4/conf/all/rp_filter
   echo 1 > /proc/sys/net/ipv6/conf/all/accept_ra
   echo 1 > /proc/sys/net/ipv6/conf/wlan0/accept_ra
   echo 0 > /proc/sys/net/ipv6/conf/all/disable_ipv6
@@ -182,4 +179,4 @@ else
 fi
 rm -f "${scripts_dir}/tables.tmp" 2>/dev/null
 }
-# 2024 9 25 2330
+# 2024 9 26 1110
