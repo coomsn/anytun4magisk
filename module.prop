@@ -1,7 +1,7 @@
 id=anytun-module
 name=anytun4magisk
-version=v1.1
-versionCode=2024092515
+version=v1.0
+versionCode=2024092612
 author=Tony
 description=Multiple ways to share VPN traffic. Wifi hotspot, usb cable, gateway.
 updateJson=https://github.com/coomsn/anytun4magisk/raw/main/update.json
